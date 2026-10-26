@@ -1,4 +1,3 @@
-
 import {
   Body,
   Controller,
@@ -29,10 +28,7 @@ export class MonitorsController {
   }
 
   @Get(':id')
-  findOne(
-    @Param('id') id: string,
-    @Query() query: MonitorOwnerQueryDto,
-  ) {
+  findOne(@Param('id') id: string, @Query() query: MonitorOwnerQueryDto) {
     return this.monitorsService.findOne(id, query.userId);
   }
 
@@ -46,10 +42,7 @@ export class MonitorsController {
   }
 
   @Delete(':id')
-  remove(
-    @Param('id') id: string,
-    @Query() query: MonitorOwnerQueryDto,
-  ) {
+  remove(@Param('id') id: string, @Query() query: MonitorOwnerQueryDto) {
     return this.monitorsService.remove(id, query.userId);
   }
 }
