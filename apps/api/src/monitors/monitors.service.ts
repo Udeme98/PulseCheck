@@ -1,8 +1,4 @@
-
-import {
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
 import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
@@ -50,11 +46,7 @@ export class MonitorsService {
     return monitor;
   }
 
-  async update(
-    id: string,
-    userId: string,
-    dto: UpdateMonitorDto,
-  ) {
+  async update(id: string, userId: string, dto: UpdateMonitorDto) {
     await this.findOne(id, userId);
 
     return this.prisma.monitor.update({
