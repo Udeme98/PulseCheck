@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,6 +7,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum MonitorStatus {
+  ACTIVE
+  PAUSED
+}
+
+enum CheckStatus {
+  UP
+  DOWN
+}
 
 model User {
   id        String   @id @default(cuid())
@@ -15,4 +23,39 @@ model User {
   name      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  monitors Monitor[]
+}
+
+model Monitor {
+  id                  String        @id @default(cuid())
+  name                String
+  url                 String
+  intervalSeconds     Int           @default(300)
+  status              MonitorStatus @default(ACTIVE)
+  consecutiveFailures Int           @default(0)
+  lastCheckedAt       DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checkResults CheckResult[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model CheckResult {
+  id             String      @id @default(cuid())
+  status         CheckStatus
+  statusCode     Int?
+  responseTimeMs Int?
+  errorMessage   String?
+  checkedAt      DateTime    @default(now())
+
+  monitorId String
+  monitor   Monitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@index([monitorId, checkedAt])
 }
