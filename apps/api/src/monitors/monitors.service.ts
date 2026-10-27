@@ -107,4 +107,15 @@ export class MonitorsService {
       ...savedResult,
     };
   }
+
+  async getCheckHistory(id: string, userId: string) {
+    // Verify the monitor exists and belongs to this user.
+    await this.findOne(id, userId);
+
+    return this.prisma.checkResult.findMany({
+      where: { monitorId: id },
+      orderBy: { checkedAt: 'desc' },
+      take: 50,
+    });
+  }
 }
