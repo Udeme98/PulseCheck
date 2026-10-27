@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
 import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
 import { HttpCheckService } from './http-check.service.js';
+import { CheckStatus } from '@prisma/client';
 
 @Injectable()
 export class MonitorsService {
@@ -72,6 +73,38 @@ export class MonitorsService {
   async check(id: string, userId: string) {
     const monitor = await this.findOne(id, userId);
 
-    return this.httpCheckService.check(monitor.url);
+    // Run the actual HTTP health check.
+    const result = await this.httpCheckService.check(monitor.url);
+
+    const status = result.status === 'UP' ? CheckStatus.UP : CheckStatus.DOWN;
+
+    const checkedAt = new Date();
+
+    // Save the result and update the monitor together.
+    const [savedResult] = await this.prisma.$transaction([
+      this.prisma.checkResult.create({
+        data: {
+          monitorId: id,
+          status,
+          statusCode: result.statusCode,
+          responseTimeMs: result.responseTimeMs,
+          errorMessage: result.errorMessage,
+          checkedAt,
+        },
+      }),
+
+      this.prisma.monitor.update({
+        where: { id },
+        data: {
+          lastCheckedAt: checkedAt,
+          consecutiveFailures: result.status === 'DOWN' ? { increment: 1 } : 0,
+        },
+      }),
+    ]);
+
+    return {
+      url: monitor.url,
+      ...savedResult,
+    };
   }
 }
