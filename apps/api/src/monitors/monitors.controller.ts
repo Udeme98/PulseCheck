@@ -45,4 +45,9 @@ export class MonitorsController {
   remove(@Param('id') id: string, @Query() query: MonitorOwnerQueryDto) {
     return this.monitorsService.remove(id, query.userId);
   }
+
+  @Post(':id/check')
+  check(@Param('id') id: string, @Query() query: MonitorOwnerQueryDto) {
+    return this.monitorsService.check(id, query.userId);
+  }
 }
