@@ -50,4 +50,12 @@ export class MonitorsController {
   check(@Param('id') id: string, @Query() query: MonitorOwnerQueryDto) {
     return this.monitorsService.check(id, query.userId);
   }
+
+  @Get(':id/history')
+  getCheckHistory(
+    @Param('id') id: string,
+    @Query() query: MonitorOwnerQueryDto,
+  ) {
+    return this.monitorsService.getCheckHistory(id, query.userId);
+  }
 }
