@@ -2,10 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
 import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
+import { HttpCheckService } from './http-check.service.js';
 
 @Injectable()
 export class MonitorsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly httpCheckService: HttpCheckService,
+  ) {}
 
   async create(dto: CreateMonitorDto) {
     const user = await this.prisma.user.findUnique({
@@ -63,5 +67,11 @@ export class MonitorsService {
     });
 
     return { message: 'Monitor deleted successfully' };
+  }
+
+  async check(id: string, userId: string) {
+    const monitor = await this.findOne(id, userId);
+
+    return this.httpCheckService.check(monitor.url);
   }
 }
