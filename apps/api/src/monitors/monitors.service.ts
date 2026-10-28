@@ -4,6 +4,7 @@ import { CreateMonitorDto } from './dto/create-monitor.dto.js';
 import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
 import { HttpCheckService } from './http-check.service.js';
 import { CheckStatus } from '@prisma/client';
+import { MonitorHealthStatus } from '@prisma/client';
 
 @Injectable()
 export class MonitorsService {
@@ -80,6 +81,17 @@ export class MonitorsService {
 
     const checkedAt = new Date();
 
+    // Calculate the next failure count and overall health status.
+    const consecutiveFailures =
+      result.status === 'DOWN' ? monitor.consecutiveFailures + 1 : 0;
+
+    const healthStatus =
+      result.status === 'UP'
+        ? MonitorHealthStatus.UP
+        : consecutiveFailures >= 2
+          ? MonitorHealthStatus.DOWN
+          : monitor.healthStatus;
+
     // Save the result and update the monitor together.
     const [savedResult] = await this.prisma.$transaction([
       this.prisma.checkResult.create({
@@ -97,7 +109,8 @@ export class MonitorsService {
         where: { id },
         data: {
           lastCheckedAt: checkedAt,
-          consecutiveFailures: result.status === 'DOWN' ? { increment: 1 } : 0,
+          consecutiveFailures,
+          healthStatus,
         },
       }),
     ]);
