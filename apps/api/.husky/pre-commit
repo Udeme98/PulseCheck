@@ -4,24 +4,31 @@
 
 cd apps/api
 
-echo "▶ [1/3] Linting (oxlint)..."
+echo "▶ [1/4] Linting (oxlint)..."
 npm run lint
 if [ $? -ne 0 ]; then
   echo "✖ Lint failed. Commit blocked."
   exit 1
 fi
 
-echo "▶ [2/3] Checking formatting (prettier)..."
+echo "▶ [2/4] Checking formatting (prettier)..."
 npm run format:check
 if [ $? -ne 0 ]; then
   echo "✖ Prettier check failed. Run 'npm run format' to fix, then re-stage."
   exit 1
 fi
 
-echo "▶ [3/3] TypeScript build (nest build)..."
+echo "▶ [3/4] TypeScript build (nest build)..."
 npm run build
 if [ $? -ne 0 ]; then
   echo "✖ Build failed. Fix TypeScript errors before committing."
+  exit 1
+fi
+
+echo "▶ [4/4] Unit tests (vitest run)..."
+npm run test
+if [ $? -ne 0 ]; then
+  echo "✖ Unit tests failed. Fix failing tests before committing."
   exit 1
 fi
 
