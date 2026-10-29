@@ -1,10 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
 import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
 import { HttpCheckService } from './http-check.service.js';
-import { CheckStatus } from '@prisma/client';
-import { MonitorHealthStatus } from '@prisma/client';
+import { CheckStatus, MonitorHealthStatus } from '@prisma/client';
 
 @Injectable()
 export class MonitorsService {
@@ -13,24 +17,36 @@ export class MonitorsService {
     private readonly httpCheckService: HttpCheckService,
   ) {}
 
-  async create(dto: CreateMonitorDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: dto.userId },
-      select: { id: true },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
+  /**
+   * Create a monitor owned by the authenticated user.
+   * userId is always derived from the verified JWT — never from the request body.
+   *
+   * Throws UnauthorizedException if the userId foreign key no longer exists
+   * (i.e. the account was deleted while the JWT was still valid).
+   */
+  async create(dto: CreateMonitorDto, userId: string) {
+    try {
+      return await this.prisma.monitor.create({
+        data: {
+          name: dto.name,
+          url: dto.url,
+          intervalSeconds: dto.intervalSeconds ?? 300,
+          userId,
+        },
+      });
+    } catch (err) {
+      // P2003 = foreign key constraint violation.
+      // The userId in the JWT no longer exists in the User table.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2003'
+      ) {
+        throw new UnauthorizedException(
+          'Your account no longer exists. Please register again.',
+        );
+      }
+      throw err;
     }
-
-    return this.prisma.monitor.create({
-      data: {
-        name: dto.name,
-        url: dto.url,
-        intervalSeconds: dto.intervalSeconds ?? 300,
-        userId: dto.userId,
-      },
-    });
   }
 
   async findAll(userId: string) {
@@ -52,21 +68,40 @@ export class MonitorsService {
     return monitor;
   }
 
+  /**
+   * Update a monitor atomically.
+   *
+   * Uses updateManyAndReturn with { id, userId } so the ownership check and the
+   * mutation happen in a single database round-trip with no TOCTOU window.
+   * Returns the updated Monitor record (same shape as before).
+   */
   async update(id: string, userId: string, dto: UpdateMonitorDto) {
-    await this.findOne(id, userId);
-
-    return this.prisma.monitor.update({
-      where: { id },
+    const [updated] = await this.prisma.monitor.updateManyAndReturn({
+      where: { id, userId },
       data: dto,
     });
+
+    if (!updated) {
+      throw new NotFoundException('Monitor not found');
+    }
+
+    return updated;
   }
 
+  /**
+   * Delete a monitor atomically.
+   *
+   * Uses deleteMany with { id, userId } so ownership is verified in the same
+   * operation as the deletion — no TOCTOU window between findOne and delete.
+   */
   async remove(id: string, userId: string) {
-    await this.findOne(id, userId);
-
-    await this.prisma.monitor.delete({
-      where: { id },
+    const { count } = await this.prisma.monitor.deleteMany({
+      where: { id, userId },
     });
+
+    if (count === 0) {
+      throw new NotFoundException('Monitor not found');
+    }
 
     return { message: 'Monitor deleted successfully' };
   }
