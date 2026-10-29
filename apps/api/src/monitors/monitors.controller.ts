@@ -6,56 +6,53 @@ import {
   Param,
   Patch,
   Post,
-  Query,
 } from '@nestjs/common';
 import { MonitorsService } from './monitors.service.js';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
 import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
-import { MonitorOwnerQueryDto } from './dto/monitor-owner-query.dto.js';
+import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
+import type { JwtPayload } from '../auth/auth.types.js';
 
 @Controller('monitors')
 export class MonitorsController {
   constructor(private readonly monitorsService: MonitorsService) {}
 
   @Post()
-  create(@Body() dto: CreateMonitorDto) {
-    return this.monitorsService.create(dto);
+  create(@Body() dto: CreateMonitorDto, @CurrentUser() user: JwtPayload) {
+    return this.monitorsService.create(dto, user.sub);
   }
 
   @Get()
-  findAll(@Query() query: MonitorOwnerQueryDto) {
-    return this.monitorsService.findAll(query.userId);
+  findAll(@CurrentUser() user: JwtPayload) {
+    return this.monitorsService.findAll(user.sub);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @Query() query: MonitorOwnerQueryDto) {
-    return this.monitorsService.findOne(id, query.userId);
+  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.monitorsService.findOne(id, user.sub);
   }
 
   @Patch(':id')
   update(
     @Param('id') id: string,
-    @Query() query: MonitorOwnerQueryDto,
     @Body() dto: UpdateMonitorDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.monitorsService.update(id, query.userId, dto);
+    return this.monitorsService.update(id, user.sub, dto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @Query() query: MonitorOwnerQueryDto) {
-    return this.monitorsService.remove(id, query.userId);
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.monitorsService.remove(id, user.sub);
   }
 
   @Post(':id/check')
-  check(@Param('id') id: string, @Query() query: MonitorOwnerQueryDto) {
-    return this.monitorsService.check(id, query.userId);
+  check(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.monitorsService.check(id, user.sub);
   }
 
   @Get(':id/history')
-  getCheckHistory(
-    @Param('id') id: string,
-    @Query() query: MonitorOwnerQueryDto,
-  ) {
-    return this.monitorsService.getCheckHistory(id, query.userId);
+  getCheckHistory(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.monitorsService.getCheckHistory(id, user.sub);
   }
 }

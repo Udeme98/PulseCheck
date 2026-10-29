@@ -19,8 +19,4 @@ export class CreateMonitorDto {
   @IsInt()
   @Min(300)
   intervalSeconds?: number;
-
-  @IsString()
-  @IsNotEmpty()
-  userId!: string;
 }
