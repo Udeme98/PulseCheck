@@ -25,7 +25,7 @@ function baseMonitor() {
     url: 'https://example.com',
     intervalSeconds: 300,
     status: MonitorStatus.ACTIVE,
-    healthStatus: MonitorHealthStatus.UP,
+    healthStatus: MonitorHealthStatus.UP as MonitorHealthStatus,
     consecutiveFailures: 0,
     lastCheckedAt: null as Date | null,
     createdAt: new Date('2026-01-01'),
