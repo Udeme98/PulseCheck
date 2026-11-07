@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { performance } from 'node:perf_hooks';
 import { guardedFetch, isGuardedFetchError } from 'guarded-fetch';
+import { validateMonitorUrl } from './monitor-url.validator.js';
 
 export interface HttpCheckResult {
   url: string;
@@ -10,75 +11,26 @@ export interface HttpCheckResult {
   errorMessage: string | null;
 }
 
-/** Ports that are valid for each scheme. Undefined (absent) is also valid. */
-const ALLOWED_PORTS: Record<string, number> = {
-  'http:': 80,
-  'https:': 443,
-};
-
-/**
- * Validates a URL against SSRF-relevant rules that are checked before
- * handing off to guardedFetch:
- *
- * 1. Must parse as a valid URL.
- * 2. Protocol must be http: or https:.
- * 3. No username or password in the URL.
- * 4. Port must be absent, or equal to the standard port for the scheme.
- *
- * Returns the parsed URL on success, or throws an Error on failure.
- */
-function validateUrl(rawUrl: string): URL {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error(`Invalid URL: ${rawUrl}`);
-  }
-
-  const allowedPort = ALLOWED_PORTS[parsed.protocol];
-  if (allowedPort === undefined) {
-    throw new Error(
-      `Unsupported protocol "${parsed.protocol}": only http: and https: are allowed`,
-    );
-  }
-
-  if (parsed.username !== '' || parsed.password !== '') {
-    throw new Error(
-      'URLs with credentials (username or password) are not allowed',
-    );
-  }
-
-  // parsed.port is an empty string when the port is absent (using scheme default).
-  if (parsed.port !== '' && parseInt(parsed.port, 10) !== allowedPort) {
-    throw new Error(
-      `Non-standard port ${parsed.port} is not allowed for ${parsed.protocol}; ` +
-        `only port ${allowedPort} (or absent) is permitted`,
-    );
-  }
-
-  return parsed;
-}
-
 @Injectable()
 export class HttpCheckService {
   async check(url: string): Promise<HttpCheckResult> {
     const startTime = performance.now();
 
     // Validate protocol, credentials, and port before making any network call.
-    let parsed: URL;
-    try {
-      parsed = validateUrl(url);
-    } catch (error: unknown) {
-      const responseTimeMs = Math.round(performance.now() - startTime);
+    // Uses the same shared policy as the DTO validators.
+    const validationError = validateMonitorUrl(url);
+    if (validationError !== null) {
       return {
         url,
         status: 'DOWN',
         statusCode: null,
-        responseTimeMs,
-        errorMessage:
-          error instanceof Error ? error.message : 'URL validation failed',
+        responseTimeMs: Math.round(performance.now() - startTime),
+        errorMessage: validationError,
       };
     }
+
+    // validateMonitorUrl guarantees the URL is parseable and uses http/https.
+    const parsed = new URL(url);
 
     try {
       const response = await guardedFetch(parsed, {

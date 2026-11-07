@@ -1,18 +1,12 @@
-import {
-  IsInt,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  IsUrl,
-  Min,
-} from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import { IsMonitorUrl } from '../monitor-url.validator.js';
 
 export class CreateMonitorDto {
   @IsString()
   @IsNotEmpty()
   name!: string;
 
-  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @IsMonitorUrl()
   url!: string;
 
   @IsOptional()
