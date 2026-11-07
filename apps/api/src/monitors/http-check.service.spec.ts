@@ -508,6 +508,32 @@ describe('HttpCheckService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Runtime validation is independent of DTO validation
+  // -------------------------------------------------------------------------
+
+  describe('runtime validation independence', () => {
+    it('blocks a non-standard port even when called directly without DTO validation', async () => {
+      // Simulates a URL that might have been stored before policy enforcement
+      // or injected by a code path that skips the DTO layer.
+      const result = await service.check('https://example.com:9999');
+
+      expect(result.status).toBe('DOWN');
+      expect(result.statusCode).toBeNull();
+      expect(result.errorMessage).toMatch(/port/i);
+      expect(mockGuardedFetch).not.toHaveBeenCalled();
+    });
+
+    it('blocks a URL with credentials even when called directly without DTO validation', async () => {
+      const result = await service.check('https://admin:secret@example.com');
+
+      expect(result.status).toBe('DOWN');
+      expect(result.statusCode).toBeNull();
+      expect(result.errorMessage).toMatch(/credentials/i);
+      expect(mockGuardedFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // UP / DOWN status classification boundary
   // -------------------------------------------------------------------------
 
