@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
 import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
 import { HttpCheckService } from './http-check.service.js';
+import { CheckCoordinatorService } from './check-coordinator.service.js';
 import { CheckStatus, MonitorHealthStatus } from '@prisma/client';
 
 @Injectable()
@@ -15,11 +16,14 @@ export class MonitorsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly httpCheckService: HttpCheckService,
+    private readonly checkCoordinator: CheckCoordinatorService,
   ) {}
 
   /**
    * Create a monitor owned by the authenticated user.
    * userId is always derived from the verified JWT — never from the request body.
+   *
+   * nextCheckAt is set to now() so the scheduler picks it up on the first tick.
    *
    * Throws UnauthorizedException if the userId foreign key no longer exists
    * (i.e. the account was deleted while the JWT was still valid).
@@ -31,6 +35,7 @@ export class MonitorsService {
           name: dto.name,
           url: dto.url,
           intervalSeconds: dto.intervalSeconds ?? 300,
+          nextCheckAt: new Date(),
           userId,
         },
       });
@@ -73,12 +78,63 @@ export class MonitorsService {
    *
    * Uses updateManyAndReturn with { id, userId } so the ownership check and the
    * mutation happen in a single database round-trip with no TOCTOU window.
-   * Returns the updated Monitor record (same shape as before).
+   *
+   * When intervalSeconds changes, the row is locked with FOR UPDATE before
+   * reading lastCheckedAt so a concurrent executeCheck cannot read a stale
+   * nextCheckAt value between the SELECT and the UPDATE.
    */
   async update(id: string, userId: string, dto: UpdateMonitorDto) {
+    const updateData: Prisma.MonitorUpdateManyMutationInput = {
+      ...(dto.name !== undefined && { name: dto.name }),
+      ...(dto.url !== undefined && { url: dto.url }),
+      ...(dto.intervalSeconds !== undefined && {
+        intervalSeconds: dto.intervalSeconds,
+      }),
+      ...(dto.status !== undefined && { status: dto.status }),
+    };
+
+    // Interval changes require a row lock so lastCheckedAt cannot become
+    // stale between reading it and updating nextCheckAt.
+    if (dto.intervalSeconds !== undefined) {
+      return this.prisma.$transaction(async (tx) => {
+        const rows = await tx.$queryRaw<Array<{ lastCheckedAt: Date | null }>>`
+          SELECT "lastCheckedAt"
+          FROM "Monitor"
+          WHERE "id" = ${id} AND "userId" = ${userId}
+          FOR UPDATE
+        `;
+
+        const current = rows[0];
+
+        if (!current) {
+          throw new NotFoundException('Monitor not found');
+        }
+
+        const base = current.lastCheckedAt ?? new Date();
+        const nextCheckAt = new Date(
+          base.getTime() + dto.intervalSeconds! * 1000,
+        );
+
+        const [updated] = await tx.monitor.updateManyAndReturn({
+          where: { id, userId },
+          data: {
+            ...updateData,
+            nextCheckAt,
+          },
+        });
+
+        if (!updated) {
+          throw new NotFoundException('Monitor not found');
+        }
+
+        return updated;
+      });
+    }
+
+    // Updates that do not change the interval need no scheduling lock.
     const [updated] = await this.prisma.monitor.updateManyAndReturn({
       where: { id, userId },
-      data: dto,
+      data: updateData,
     });
 
     if (!updated) {
@@ -106,11 +162,105 @@ export class MonitorsService {
     return { message: 'Monitor deleted successfully' };
   }
 
+  /**
+   * Run a health check for the given monitor.
+   *
+   * Ownership is verified first (findOne throws NotFoundException for a wrong
+   * userId). Then the check is dispatched through the CheckCoordinatorService,
+   * which deduplicates concurrent requests for the same monitor: if a check is
+   * already in flight, the caller receives the existing promise rather than
+   * triggering a second HTTP request.
+   *
+   * The deduplication happens *after* ownership is verified, so a request
+   * from a user who does not own the monitor still fails at findOne.
+   */
   async check(id: string, userId: string) {
-    const monitor = await this.findOne(id, userId);
+    // Verify ownership before entering the coordinator.
+    await this.findOne(id, userId);
 
+    return this.checkCoordinator.run(id, async () => {
+      // Reload inside the coordinator so we use the latest database state.
+      const monitor = await this.findOne(id, userId);
+
+      return this.executeCheck(
+        monitor.id,
+        monitor.url,
+        monitor.consecutiveFailures,
+        monitor.healthStatus,
+      );
+    });
+  }
+
+  /**
+   * Run a scheduled check only if the monitor is still active and due.
+   * The database state is reloaded inside the coordinator to avoid
+   * executing checks using stale scheduler snapshots.
+   */
+  async checkIfDue(id: string) {
+    return this.checkCoordinator.run(id, async () => {
+      const monitor = await this.prisma.monitor.findFirst({
+        where: {
+          id,
+          status: 'ACTIVE',
+          nextCheckAt: { lte: new Date() },
+        },
+        select: {
+          id: true,
+          url: true,
+          consecutiveFailures: true,
+          healthStatus: true,
+        },
+      });
+
+      // It may have been checked, paused, or deleted since the scheduler
+      // initially fetched the due-monitor list.
+      if (!monitor) {
+        return null;
+      }
+
+      return this.executeCheck(
+        monitor.id,
+        monitor.url,
+        monitor.consecutiveFailures,
+        monitor.healthStatus,
+      );
+    });
+  }
+
+  /**
+   * Execute the actual HTTP check and persist the result.
+   * Called at most once per concurrent window for a given monitor ID.
+   * This method does NOT perform ownership checks — the caller must do that
+   * before reaching here.
+   *
+   * nextCheckAt is computed atomically inside the write transaction using the
+   * monitor's current database intervalSeconds value rather than the value
+   * captured at dispatch time. This eliminates the interval-update race:
+   * if a concurrent PATCH changes intervalSeconds while the HTTP request is
+   * in flight, the transaction reads the committed value from the row and
+   * computes the correct next-check time regardless of which transaction
+   * commits first.
+   *
+   *   Ordering A — interval PATCH commits before this transaction:
+   *     The UPDATE here reads the new intervalSeconds and sets
+   *     nextCheckAt = checkedAt + newInterval. Correct.
+   *
+   *   Ordering B — this transaction commits before the interval PATCH:
+   *     The UPDATE here reads the old intervalSeconds. The PATCH then
+   *     overwrites nextCheckAt with lastCheckedAt + newInterval. Correct.
+   *
+   * The callback form of $transaction is required so that $executeRaw
+   * (which carries the column-expression for nextCheckAt) and
+   * checkResult.create can share the same atomic unit.
+   */
+  async executeCheck(
+    id: string,
+    url: string,
+    currentConsecutiveFailures: number,
+    currentHealthStatus: MonitorHealthStatus,
+  ) {
     // Run the actual HTTP health check.
-    const result = await this.httpCheckService.check(monitor.url);
+    const result = await this.httpCheckService.check(url);
 
     const status = result.status === 'UP' ? CheckStatus.UP : CheckStatus.DOWN;
 
@@ -118,18 +268,21 @@ export class MonitorsService {
 
     // Calculate the next failure count and overall health status.
     const consecutiveFailures =
-      result.status === 'DOWN' ? monitor.consecutiveFailures + 1 : 0;
+      result.status === 'DOWN' ? currentConsecutiveFailures + 1 : 0;
 
     const healthStatus =
       result.status === 'UP'
         ? MonitorHealthStatus.UP
         : consecutiveFailures >= 2
           ? MonitorHealthStatus.DOWN
-          : monitor.healthStatus;
+          : currentHealthStatus;
 
-    // Save the result and update the monitor together.
-    const [savedResult] = await this.prisma.$transaction([
-      this.prisma.checkResult.create({
+    // Persist the check result and update the monitor atomically.
+    // nextCheckAt is derived from the row's current intervalSeconds column
+    // so a concurrent interval change cannot be overwritten by a stale
+    // parameter value captured before the HTTP request started.
+    const savedResult = await this.prisma.$transaction(async (tx) => {
+      const checkResult = await tx.checkResult.create({
         data: {
           monitorId: id,
           status,
@@ -138,20 +291,24 @@ export class MonitorsService {
           errorMessage: result.errorMessage,
           checkedAt,
         },
-      }),
+      });
 
-      this.prisma.monitor.update({
-        where: { id },
-        data: {
-          lastCheckedAt: checkedAt,
-          consecutiveFailures,
-          healthStatus,
-        },
-      }),
-    ]);
+      await tx.$executeRaw`
+        UPDATE "Monitor"
+        SET
+          "lastCheckedAt"       = ${checkedAt},
+          "consecutiveFailures" = ${consecutiveFailures},
+          "healthStatus"        = ${healthStatus}::"MonitorHealthStatus",
+          "nextCheckAt"         = ${checkedAt} + ("intervalSeconds" * INTERVAL '1 second'),
+          "updatedAt"           = NOW()
+        WHERE id = ${id}
+      `;
+
+      return checkResult;
+    });
 
     return {
-      url: monitor.url,
+      url,
       ...savedResult,
     };
   }
