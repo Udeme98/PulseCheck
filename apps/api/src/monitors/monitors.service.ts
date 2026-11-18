@@ -304,6 +304,18 @@ export class MonitorsService {
         WHERE id = ${id}
       `;
 
+      if (status === CheckStatus.DOWN && consecutiveFailures >= 2) {
+        await tx.incident.createMany({
+          data: [{ monitorId: id, startedAt: checkedAt }],
+          skipDuplicates: true,
+        });
+      } else if (status === CheckStatus.UP) {
+        await tx.incident.updateMany({
+          where: { monitorId: id, resolvedAt: null },
+          data: { resolvedAt: checkedAt },
+        });
+      }
+
       return checkResult;
     });
 
@@ -321,6 +333,15 @@ export class MonitorsService {
       where: { monitorId: id },
       orderBy: { checkedAt: 'desc' },
       take: 50,
+    });
+  }
+
+  async getIncidents(id: string, userId: string) {
+    await this.findOne(id, userId);
+
+    return this.prisma.incident.findMany({
+      where: { monitorId: id },
+      orderBy: { startedAt: 'desc' },
     });
   }
 }

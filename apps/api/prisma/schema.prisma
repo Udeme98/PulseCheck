@@ -48,8 +48,9 @@ model Monitor {
   updatedAt           DateTime            @updatedAt
 
   userId       String
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   checkResults CheckResult[]
+  incidents    Incident[]
 
   @@index([userId])
   @@index([status, nextCheckAt])
@@ -67,4 +68,18 @@ model CheckResult {
   monitor   Monitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
 
   @@index([monitorId, checkedAt])
+}
+
+model Incident {
+  id         String   @id @default(cuid())
+  startedAt  DateTime @default(now())
+  resolvedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  monitorId String
+  monitor   Monitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@index([monitorId, startedAt])
+  @@index([monitorId, resolvedAt])
 }
