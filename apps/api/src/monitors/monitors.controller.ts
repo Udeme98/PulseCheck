@@ -55,4 +55,9 @@ export class MonitorsController {
   getCheckHistory(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.monitorsService.getCheckHistory(id, user.sub);
   }
+
+  @Get(':id/incidents')
+  getIncidents(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.monitorsService.getIncidents(id, user.sub);
+  }
 }

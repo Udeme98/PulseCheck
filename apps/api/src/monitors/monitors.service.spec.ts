@@ -72,6 +72,11 @@ describe('MonitorsService', () => {
       create: vi.fn(),
       findMany: vi.fn(),
     },
+    incident: {
+      createMany: vi.fn(),
+      updateMany: vi.fn(),
+      findMany: vi.fn(),
+    },
     // The callback form of $transaction (used by executeCheck and update)
     // calls the supplied function with a tx object that exposes the same
     // operations.
@@ -86,6 +91,10 @@ describe('MonitorsService', () => {
               updateManyAndReturn: mockPrisma.monitor.updateManyAndReturn,
             },
             checkResult: { create: mockPrisma.checkResult.create },
+            incident: {
+              createMany: mockPrisma.incident.createMany,
+              updateMany: mockPrisma.incident.updateMany,
+            },
             $executeRaw: mockPrisma.$executeRaw,
             $queryRaw: mockPrisma.$queryRaw,
           };
@@ -408,6 +417,7 @@ describe('MonitorsService', () => {
       // values order: checkedAt, consecutiveFailures, healthStatus, checkedAt, id
       expect(values[1]).toBe(1); // consecutiveFailures
       expect(values[2]).toBe(MonitorHealthStatus.UP); // healthStatus unchanged
+      expect(mockPrisma.incident.createMany).not.toHaveBeenCalled();
     });
 
     // -----------------------------------------------------------------------
@@ -436,6 +446,15 @@ describe('MonitorsService', () => {
       const { values } = getExecuteRawCall();
       expect(values[1]).toBe(2); // consecutiveFailures
       expect(values[2]).toBe(MonitorHealthStatus.DOWN); // healthStatus flips
+      expect(mockPrisma.incident.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            monitorId: 'monitor-1',
+            startedAt: expect.any(Date),
+          }),
+        ],
+        skipDuplicates: true,
+      });
     });
 
     // -----------------------------------------------------------------------
@@ -464,6 +483,15 @@ describe('MonitorsService', () => {
       const { values } = getExecuteRawCall();
       expect(values[1]).toBe(3); // consecutiveFailures
       expect(values[2]).toBe(MonitorHealthStatus.DOWN); // health stays DOWN
+      expect(mockPrisma.incident.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            monitorId: 'monitor-1',
+            startedAt: expect.any(Date),
+          }),
+        ],
+        skipDuplicates: true,
+      });
     });
 
     // -----------------------------------------------------------------------
@@ -494,6 +522,10 @@ describe('MonitorsService', () => {
       const { values } = getExecuteRawCall();
       expect(values[1]).toBe(0); // consecutiveFailures reset
       expect(values[2]).toBe(MonitorHealthStatus.UP); // health → UP
+      expect(mockPrisma.incident.updateMany).toHaveBeenCalledWith({
+        where: { monitorId: 'monitor-1', resolvedAt: null },
+        data: { resolvedAt: expect.any(Date) },
+      });
     });
 
     // -----------------------------------------------------------------------
@@ -522,6 +554,7 @@ describe('MonitorsService', () => {
       const { values } = getExecuteRawCall();
       expect(values[1]).toBe(1); // consecutiveFailures
       expect(values[2]).toBe(MonitorHealthStatus.UNKNOWN); // health stays UNKNOWN
+      expect(mockPrisma.incident.createMany).not.toHaveBeenCalled();
     });
 
     // -----------------------------------------------------------------------
@@ -552,6 +585,30 @@ describe('MonitorsService', () => {
       const { values } = getExecuteRawCall();
       expect(values[1]).toBe(0); // consecutiveFailures
       expect(values[2]).toBe(MonitorHealthStatus.UP); // health stays UP
+      expect(mockPrisma.incident.updateMany).toHaveBeenCalledWith({
+        where: { monitorId: 'monitor-1', resolvedAt: null },
+        data: { resolvedAt: expect.any(Date) },
+      });
+    });
+
+    it('succeeds when an UP check has no open incident to resolve', async () => {
+      const monitor = makeMonitor();
+      mockPrisma.monitor.findFirst.mockResolvedValue(monitor);
+      mockHttpCheck.check.mockResolvedValue({
+        url: monitor.url,
+        status: 'UP',
+        statusCode: 200,
+        responseTimeMs: 20,
+        errorMessage: null,
+      });
+      mockPrisma.checkResult.create.mockResolvedValue(makeCheckResult());
+      mockPrisma.incident.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.check('monitor-1', 'user-1')).resolves.toMatchObject(
+        { status: CheckStatus.UP },
+      );
+
+      expect(mockPrisma.incident.updateMany).toHaveBeenCalledOnce();
     });
 
     // -----------------------------------------------------------------------
@@ -695,6 +752,28 @@ describe('MonitorsService', () => {
       expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
     });
 
+    it('persists incident creation in the same transaction as the check and monitor update', async () => {
+      const monitor = makeMonitor({ consecutiveFailures: 1 });
+      mockPrisma.monitor.findFirst.mockResolvedValue(monitor);
+      mockHttpCheck.check.mockResolvedValue({
+        url: monitor.url,
+        status: 'DOWN',
+        statusCode: 503,
+        responseTimeMs: 30,
+        errorMessage: 'Service Unavailable',
+      });
+      mockPrisma.checkResult.create.mockResolvedValue(
+        makeCheckResult({ status: CheckStatus.DOWN }),
+      );
+
+      await service.check('monitor-1', 'user-1');
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
+      expect(mockPrisma.checkResult.create).toHaveBeenCalledOnce();
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledOnce();
+      expect(mockPrisma.incident.createMany).toHaveBeenCalledOnce();
+    });
+
     // -----------------------------------------------------------------------
     // Deduplication: two simultaneous check() calls for the same monitor
     // produce only one HTTP request.
@@ -828,6 +907,30 @@ describe('MonitorsService', () => {
       ).rejects.toThrow(NotFoundException);
 
       expect(mockPrisma.checkResult.findMany).not.toHaveBeenCalled();
+    });
+
+    it("getIncidents() prevents user B from reading user A's incidents", async () => {
+      mockPrisma.monitor.findFirst.mockResolvedValue(null);
+
+      await expect(service.getIncidents('monitor-1', 'user-B')).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(mockPrisma.incident.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getIncidents()', () => {
+    it('returns monitor incidents in descending startedAt order', async () => {
+      mockPrisma.monitor.findFirst.mockResolvedValue(makeMonitor());
+      mockPrisma.incident.findMany.mockResolvedValue([]);
+
+      await service.getIncidents('monitor-1', 'user-1');
+
+      expect(mockPrisma.incident.findMany).toHaveBeenCalledWith({
+        where: { monitorId: 'monitor-1' },
+        orderBy: { startedAt: 'desc' },
+      });
     });
   });
 });
