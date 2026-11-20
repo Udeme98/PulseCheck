@@ -80,6 +80,48 @@ model Incident {
   monitorId String
   monitor   Monitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
 
+  notifications Notification[]
+
   @@index([monitorId, startedAt])
   @@index([monitorId, resolvedAt])
+}
+
+enum NotificationType {
+  INCIDENT_OPENED
+  INCIDENT_RESOLVED
+}
+
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+model Notification {
+  id                  String             @id @default(cuid())
+  type                NotificationType
+  status              NotificationStatus @default(PENDING)
+
+  recipient           String
+  payload             Json
+
+  attempts            Int                @default(0)
+  maxAttempts         Int                @default(5)
+  nextAttemptAt       DateTime           @default(now())
+
+  processingStartedAt DateTime?
+  sentAt              DateTime?
+  lastError           String?            @db.Text
+
+  deduplicationKey    String             @unique
+
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  incidentId          String?
+  incident            Incident?          @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+
+  @@index([status, nextAttemptAt])
+  @@index([incidentId])
 }

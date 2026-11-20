@@ -305,15 +305,98 @@ export class MonitorsService {
       `;
 
       if (status === CheckStatus.DOWN && consecutiveFailures >= 2) {
-        await tx.incident.createMany({
+        const { count } = await tx.incident.createMany({
           data: [{ monitorId: id, startedAt: checkedAt }],
           skipDuplicates: true,
         });
+
+        // Only create a notification when a new incident was actually opened.
+        if (count === 1) {
+          const incident = await tx.incident.findFirst({
+            where: { monitorId: id, startedAt: checkedAt },
+            select: { id: true },
+          });
+
+          if (!incident) {
+            throw new Error('Newly created incident could not be found');
+          }
+
+          const monitor = await tx.monitor.findUnique({
+            where: { id },
+            select: {
+              name: true,
+              url: true,
+              user: {
+                select: { email: true },
+              },
+            },
+          });
+
+          if (!monitor) {
+            throw new Error('Monitor not found while creating notification');
+          }
+
+          await tx.notification.create({
+            data: {
+              type: 'INCIDENT_OPENED',
+              recipient: monitor.user.email,
+              payload: {
+                monitorName: monitor.name,
+                monitorUrl: monitor.url,
+                incidentStartedAt: checkedAt.toISOString(),
+              },
+              incidentId: incident.id,
+              deduplicationKey: `${incident.id}:INCIDENT_OPENED`,
+            },
+          });
+        }
       } else if (status === CheckStatus.UP) {
-        await tx.incident.updateMany({
+        const openIncident = await tx.incident.findFirst({
           where: { monitorId: id, resolvedAt: null },
-          data: { resolvedAt: checkedAt },
+          select: { id: true },
         });
+
+        if (openIncident) {
+          const { count } = await tx.incident.updateMany({
+            where: {
+              id: openIncident.id,
+              resolvedAt: null,
+            },
+            data: { resolvedAt: checkedAt },
+          });
+
+          // Only notify if this transaction actually resolved the incident.
+          if (count === 1) {
+            const monitor = await tx.monitor.findUnique({
+              where: { id },
+              select: {
+                name: true,
+                url: true,
+                user: {
+                  select: { email: true },
+                },
+              },
+            });
+
+            if (!monitor) {
+              throw new Error('Monitor not found while creating notification');
+            }
+
+            await tx.notification.create({
+              data: {
+                type: 'INCIDENT_RESOLVED',
+                recipient: monitor.user.email,
+                payload: {
+                  monitorName: monitor.name,
+                  monitorUrl: monitor.url,
+                  incidentResolvedAt: checkedAt.toISOString(),
+                },
+                incidentId: openIncident.id,
+                deduplicationKey: `${openIncident.id}:INCIDENT_RESOLVED`,
+              },
+            });
+          }
+        }
       }
 
       return checkResult;
