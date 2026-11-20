@@ -64,6 +64,7 @@ describe('MonitorsService', () => {
       create: vi.fn(),
       findMany: vi.fn(),
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       updateManyAndReturn: vi.fn(),
       delete: vi.fn(),
       deleteMany: vi.fn(),
@@ -75,8 +76,10 @@ describe('MonitorsService', () => {
     incident: {
       createMany: vi.fn(),
       updateMany: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
     },
+    notification: { create: vi.fn() },
     // The callback form of $transaction (used by executeCheck and update)
     // calls the supplied function with a tx object that exposes the same
     // operations.
@@ -88,13 +91,16 @@ describe('MonitorsService', () => {
           // Callback-form: build a minimal tx object and invoke the callback.
           const tx = {
             monitor: {
+              findUnique: mockPrisma.monitor.findUnique,
               updateManyAndReturn: mockPrisma.monitor.updateManyAndReturn,
             },
             checkResult: { create: mockPrisma.checkResult.create },
             incident: {
               createMany: mockPrisma.incident.createMany,
               updateMany: mockPrisma.incident.updateMany,
+              findFirst: mockPrisma.incident.findFirst,
             },
+            notification: { create: mockPrisma.notification.create },
             $executeRaw: mockPrisma.$executeRaw,
             $queryRaw: mockPrisma.$queryRaw,
           };
@@ -142,6 +148,9 @@ describe('MonitorsService', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockPrisma.incident.createMany.mockResolvedValue({ count: 0 });
+    mockPrisma.incident.findFirst.mockResolvedValue(null);
+    mockPrisma.incident.updateMany.mockResolvedValue({ count: 0 });
 
     coordinator = new CheckCoordinatorService();
 
@@ -405,6 +414,13 @@ describe('MonitorsService', () => {
         errorMessage: 'Service Unavailable',
       });
       mockPrisma.checkResult.create.mockResolvedValue(savedResult);
+      mockPrisma.incident.findFirst.mockResolvedValue({ id: 'incident-1' });
+      mockPrisma.incident.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.monitor.findUnique.mockResolvedValue({
+        name: monitor.name,
+        url: monitor.url,
+        user: { email: 'owner@example.com' },
+      });
 
       const result = await service.check('monitor-1', 'user-1');
 
@@ -513,6 +529,13 @@ describe('MonitorsService', () => {
 
       const savedResult = makeCheckResult({ status: CheckStatus.UP });
       mockPrisma.checkResult.create.mockResolvedValue(savedResult);
+      mockPrisma.incident.findFirst.mockResolvedValue({ id: 'incident-1' });
+      mockPrisma.incident.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.monitor.findUnique.mockResolvedValue({
+        name: monitor.name,
+        url: monitor.url,
+        user: { email: 'owner@example.com' },
+      });
 
       const result = await service.check('monitor-1', 'user-1');
 
@@ -523,7 +546,7 @@ describe('MonitorsService', () => {
       expect(values[1]).toBe(0); // consecutiveFailures reset
       expect(values[2]).toBe(MonitorHealthStatus.UP); // health → UP
       expect(mockPrisma.incident.updateMany).toHaveBeenCalledWith({
-        where: { monitorId: 'monitor-1', resolvedAt: null },
+        where: { id: 'incident-1', resolvedAt: null },
         data: { resolvedAt: expect.any(Date) },
       });
     });
@@ -576,6 +599,13 @@ describe('MonitorsService', () => {
 
       const savedResult = makeCheckResult({ status: CheckStatus.UP });
       mockPrisma.checkResult.create.mockResolvedValue(savedResult);
+      mockPrisma.incident.findFirst.mockResolvedValue({ id: 'incident-1' });
+      mockPrisma.incident.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.monitor.findUnique.mockResolvedValue({
+        name: monitor.name,
+        url: monitor.url,
+        user: { email: 'owner@example.com' },
+      });
 
       const result = await service.check('monitor-1', 'user-1');
 
@@ -586,7 +616,7 @@ describe('MonitorsService', () => {
       expect(values[1]).toBe(0); // consecutiveFailures
       expect(values[2]).toBe(MonitorHealthStatus.UP); // health stays UP
       expect(mockPrisma.incident.updateMany).toHaveBeenCalledWith({
-        where: { monitorId: 'monitor-1', resolvedAt: null },
+        where: { id: 'incident-1', resolvedAt: null },
         data: { resolvedAt: expect.any(Date) },
       });
     });
@@ -602,13 +632,16 @@ describe('MonitorsService', () => {
         errorMessage: null,
       });
       mockPrisma.checkResult.create.mockResolvedValue(makeCheckResult());
-      mockPrisma.incident.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(service.check('monitor-1', 'user-1')).resolves.toMatchObject(
         { status: CheckStatus.UP },
       );
 
-      expect(mockPrisma.incident.updateMany).toHaveBeenCalledOnce();
+      expect(mockPrisma.incident.findFirst).toHaveBeenCalledWith({
+        where: { monitorId: 'monitor-1', resolvedAt: null },
+        select: { id: true },
+      });
+      expect(mockPrisma.incident.updateMany).not.toHaveBeenCalled();
     });
 
     // -----------------------------------------------------------------------
@@ -669,6 +702,13 @@ describe('MonitorsService', () => {
       mockPrisma.checkResult.create.mockResolvedValue(
         makeCheckResult({ status: CheckStatus.DOWN }),
       );
+      mockPrisma.incident.createMany.mockResolvedValue({ count: 1 });
+      mockPrisma.incident.findFirst.mockResolvedValue({ id: 'incident-1' });
+      mockPrisma.monitor.findUnique.mockResolvedValue({
+        name: monitor.name,
+        url: monitor.url,
+        user: { email: 'owner@example.com' },
+      });
 
       await service.check('monitor-1', 'user-1');
 
@@ -765,6 +805,13 @@ describe('MonitorsService', () => {
       mockPrisma.checkResult.create.mockResolvedValue(
         makeCheckResult({ status: CheckStatus.DOWN }),
       );
+      mockPrisma.incident.createMany.mockResolvedValue({ count: 1 });
+      mockPrisma.incident.findFirst.mockResolvedValue({ id: 'incident-1' });
+      mockPrisma.monitor.findUnique.mockResolvedValue({
+        name: monitor.name,
+        url: monitor.url,
+        user: { email: 'owner@example.com' },
+      });
 
       await service.check('monitor-1', 'user-1');
 
@@ -772,6 +819,13 @@ describe('MonitorsService', () => {
       expect(mockPrisma.checkResult.create).toHaveBeenCalledOnce();
       expect(mockPrisma.$executeRaw).toHaveBeenCalledOnce();
       expect(mockPrisma.incident.createMany).toHaveBeenCalledOnce();
+      expect(mockPrisma.notification.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          type: 'INCIDENT_OPENED',
+          recipient: 'owner@example.com',
+          incidentId: 'incident-1',
+        }),
+      });
     });
 
     // -----------------------------------------------------------------------

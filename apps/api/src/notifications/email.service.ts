@@ -10,14 +10,17 @@ export class EmailService {
 
   constructor(private readonly configService: ConfigService) {
     const host = this.configService.get<string>('SMTP_HOST');
-    const port = Number(this.configService.get<string>('SMTP_PORT'));
+    const portValue = this.configService.get<string>('SMTP_PORT');
+    const port = Number(portValue);
     const user = this.configService.get<string>('SMTP_USER');
     const pass = this.configService.get<string>('SMTP_PASS');
     const from = this.configService.get<string>('SMTP_FROM');
 
-    if (!host || !port || !user || !pass || !from) {
+    const validPort = Number.isInteger(port) && port >= 1 && port <= 65535;
+
+    if (!host || !validPort || !user || !pass || !from) {
       this.logger.warn(
-        'SMTP is not fully configured. Email delivery is disabled.',
+        'SMTP is not fully configured or has invalid settings. Email delivery is disabled.',
       );
 
       this.transporter = null;
@@ -38,7 +41,12 @@ export class EmailService {
     this.from = from;
   }
 
-  async sendMail(to: string, subject: string, html: string): Promise<void> {
+  async sendMail(
+    to: string,
+    subject: string,
+    html: string,
+    text: string,
+  ): Promise<void> {
     if (!this.transporter || !this.from) {
       throw new Error('Email delivery is unavailable: SMTP is not configured.');
     }
@@ -48,6 +56,7 @@ export class EmailService {
       to,
       subject,
       html,
+      text,
     });
   }
 }
