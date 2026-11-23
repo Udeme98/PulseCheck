@@ -36,6 +36,9 @@ export class EmailService {
         user,
         pass,
       },
+      connectionTimeout: 30_000,
+      greetingTimeout: 30_000,
+      socketTimeout: 120_000,
     });
 
     this.from = from;

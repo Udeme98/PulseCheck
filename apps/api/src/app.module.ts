@@ -9,6 +9,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
 import { MonitorsModule } from './monitors/monitors.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { UsersModule } from './users/users.module.js';
     UsersModule,
     AuthModule,
     MonitorsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
